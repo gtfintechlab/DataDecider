@@ -1,56 +1,51 @@
-"""Logging utilities for OLMo training."""
+"""OLMo training logging utilities - DEPRECATED.
+
+This module is deprecated. Use data_decide.utils.logging_utils for all logging functionality.
+"""
 
 import logging
-import os
-import sys
-from pathlib import Path
+import warnings
 from typing import Optional
+
+from ...utils.logging_utils import get_logger as _get_logger
+
+# Import from the consolidated logging utilities
+from ...utils.logging_utils import setup_logging as _setup_logging
+
+# Deprecation warning
+warnings.warn(
+    "data_decide.olmo.utils.logging_utils is deprecated. Use data_decide.utils.logging_utils instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 def setup_logging(output_dir: str, log_level: str = "INFO", log_file: str = "training.log") -> None:
     """
-    Setup logging configuration for training.
+    DEPRECATED: Setup logging configuration for training.
+
+    Use data_decide.utils.logging_utils.configure_for_training() instead.
 
     Args:
         output_dir: Directory to save log files
         log_level: Logging level (INFO, DEBUG, etc.)
         log_file: Name of the log file
     """
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
+    warnings.warn(
+        "setup_logging is deprecated. Use configure_for_training() from data_decide.utils.logging_utils",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
-    # Configure logging format
-    log_format = "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
-    date_format = "%Y-%m-%d %H:%M:%S"
-
-    # Get root logger
-    logger = logging.getLogger()
-    logger.setLevel(getattr(logging, log_level.upper()))
-
-    # Remove existing handlers
-    for handler in logger.handlers[:]:
-        logger.removeHandler(handler)
-
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(getattr(logging, log_level.upper()))
-    console_handler.setFormatter(logging.Formatter(log_format, date_format))
-    logger.addHandler(console_handler)
-
-    # File handler
-    log_path = Path(output_dir) / log_file
-    file_handler = logging.FileHandler(log_path)
-    file_handler.setLevel(getattr(logging, log_level.upper()))
-    file_handler.setFormatter(logging.Formatter(log_format, date_format))
-    logger.addHandler(file_handler)
-
-    # Log initial message
-    logger.info(f"Logging initialized. Log file: {log_path}")
+    # Forward to the new consolidated function
+    _setup_logging(output_dir=output_dir, log_level=log_level, log_file=log_file)
 
 
 def get_logger(name: Optional[str] = None) -> logging.Logger:
     """
-    Get a logger instance.
+    DEPRECATED: Get a logger instance.
+
+    Use data_decide.utils.logging_utils.get_logger() instead.
 
     Args:
         name: Name of the logger (usually __name__)
@@ -58,4 +53,10 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
     Returns:
         Logger instance
     """
-    return logging.getLogger(name)
+    warnings.warn(
+        "get_logger is deprecated. Use get_logger() from data_decide.utils.logging_utils",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    return _get_logger(name)

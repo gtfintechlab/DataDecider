@@ -1,334 +1,327 @@
-# src/training/trainer.py
-import json
-import os
-from typing import Any, Dict, Optional
+"""
+Refactored OLMo trainer following Single Responsibility Principle.
+
+This module provides a clean, modular trainer that orchestrates specialized
+components rather than handling all concerns directly.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Optional, Union
 
 import torch
-import wandb
 from accelerate import Accelerator
-from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
-from transformers import (
-    AutoTokenizer,
-    get_cosine_schedule_with_warmup,
-    get_linear_schedule_with_warmup,
-)
 
-from ..models.configuration_olmo import OLMO_CONFIGS
-from ..models.olmo_model import OLMoForCausalLM
-from ..utils.checkpoint_utils import save_checkpoint
-from ..utils.logging_utils import get_logger
+from ...utils.logging_utils import get_logger
+from ...utils.type_definitions import (
+    BatchData,
+    ConfigDict,
+    DatasetProtocol,
+    ExperimentConfig,
+    MetricsDict,
+    TrainingConfig,
+    is_batch_data,
+    validate_experiment_config,
+)
+from .components import (
+    CheckpointManager,
+    DataManager,
+    EvaluationManager,
+    LoggingManager,
+    OLMoModelManager,
+    OptimizationManager,
+)
 
 logger = get_logger(__name__)
 
 
 class OLMoTrainer:
-    """Main trainer class for OLMo models."""
+    """
+    Refactored OLMo trainer following Single Responsibility Principle.
+
+    This trainer orchestrates specialized component managers:
+    - ModelManager: Handles model creation and preparation
+    - DataManager: Manages data loading and sampling
+    - OptimizationManager: Creates optimizers and schedulers
+    - LoggingManager: Handles experiment tracking
+    - CheckpointManager: Manages model saving/loading
+    - EvaluationManager: Runs evaluation and metrics
+
+    The trainer's sole responsibility is orchestrating the training loop
+    and coordinating between components.
+    """
 
     def __init__(
         self,
-        config: Dict[str, Any],
-        model: Optional[OLMoForCausalLM] = None,
-        train_dataset=None,
-        eval_dataset=None,
-        tokenizer=None,
-    ):
-        self.config = config
-        self.training_config = config["training"]
+        config: Union[ConfigDict, ExperimentConfig],
+        model: Optional[torch.nn.Module] = None,
+        train_dataset: Optional[DatasetProtocol] = None,
+        eval_dataset: Optional[DatasetProtocol] = None,
+        tokenizer: Optional[Any] = None,  # Kept for interface compatibility
+    ) -> None:
+        """
+        Initialize the refactored trainer with component managers.
 
-        # Initialize accelerator
+        Args:
+            config: Training configuration
+            train_dataset: Training dataset
+            eval_dataset: Evaluation dataset (optional)
+            model: Pre-initialized model (optional)
+        """
+        # Validate and store configuration
+        self.config: ExperimentConfig = validate_experiment_config(config)
+        self.training_config: TrainingConfig = self.config["training"]
+
+        # Initialize accelerator for distributed training
         self.accelerator = Accelerator(
             mixed_precision="fp16" if self.training_config["fp16"] else "no",
             gradient_accumulation_steps=self.training_config["gradient_accumulation_steps"],
             log_with=self.training_config["report_to"],
         )
 
-        # Initialize model
-        if model is None:
-            model_config = OLMO_CONFIGS[self.training_config["model_size"]]
-            self.model = OLMoForCausalLM(model_config)
-        else:
-            self.model = model
+        # Store tokenizer for interface compatibility (not used in practice)
+        self.tokenizer = tokenizer
 
-        # Initialize tokenizer
-        if tokenizer is None:
-            self.tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-7B")
-        else:
-            self.tokenizer = tokenizer
+        # Initialize component managers
+        self._setup_component_managers(train_dataset, eval_dataset, model)
 
-        # Datasets
-        self.train_dataset = train_dataset
-        self.eval_dataset = eval_dataset
+        # Training state
+        self.global_step: int = 0
+        self.best_eval_loss: float = float("inf")
 
-        # Initialize training components
-        self._setup_training()
+    def _setup_component_managers(
+        self,
+        train_dataset: Optional[DatasetProtocol],
+        eval_dataset: Optional[DatasetProtocol],
+        model: Optional[torch.nn.Module],
+    ) -> None:
+        """Initialize all component managers."""
+        # Model management
+        self.model_manager = OLMoModelManager(self.config, self.accelerator)
+        if model is not None:
+            self.model_manager._model = self.accelerator.prepare(model)
 
-    def _setup_training(self):
-        """Setup training components."""
-        # Data loaders
-        train_sampler = (
-            DistributedSampler(
-                self.train_dataset,
-                num_replicas=self.accelerator.num_processes,
-                rank=self.accelerator.process_index,
-                shuffle=True,
-            )
-            if self.accelerator.num_processes > 1
-            else None
-        )
+        # Data management
+        self.data_manager = DataManager(self.config, self.accelerator, train_dataset, eval_dataset)
 
-        self.train_dataloader = DataLoader(
-            self.train_dataset,
-            batch_size=self.training_config["batch_size"],
-            sampler=train_sampler,
-            shuffle=(train_sampler is None),
-            num_workers=self.training_config["num_workers"],
-            pin_memory=True,
-        )
+        # Get model for optimization setup
+        model_for_optim = self.model_manager.model
 
-        if self.eval_dataset:
-            self.eval_dataloader = DataLoader(
-                self.eval_dataset,
-                batch_size=self.training_config["per_device_eval_batch_size"],
-                shuffle=False,
-                num_workers=self.training_config["num_workers"],
-                pin_memory=True,
-            )
+        # Optimization management
+        self.optimization_manager = OptimizationManager(self.config, model_for_optim, self.accelerator)
 
-        # Optimizer
-        self.optimizer = self._create_optimizer()
+        # Logging management
+        self.logging_manager = LoggingManager(self.config, self.accelerator)
 
-        # Learning rate scheduler
-        num_training_steps = len(self.train_dataloader) * self.training_config["num_train_epochs"]
-        if self.training_config["max_steps"] > 0:
-            num_training_steps = min(num_training_steps, self.training_config["max_steps"])
+        # Checkpoint management
+        output_dir = self.config.get("output_dir", "./outputs")
+        self.checkpoint_manager = CheckpointManager(self.config, self.accelerator, output_dir)
 
-        self.lr_scheduler = self._create_scheduler(num_training_steps)
+        # Evaluation management
+        self.evaluation_manager = EvaluationManager(self.config, self.accelerator)
 
-        # Prepare with accelerator
-        self.model, self.optimizer, self.train_dataloader, self.lr_scheduler = self.accelerator.prepare(
-            self.model, self.optimizer, self.train_dataloader, self.lr_scheduler
-        )
+    def train(self) -> None:
+        """
+        Main training loop - orchestrates all components.
 
-        if self.eval_dataset:
-            self.eval_dataloader = self.accelerator.prepare(self.eval_dataloader)
-
-        # Initialize tracking
-        self.global_step = 0
-        self.best_eval_loss = float("inf")
-
-        # Setup logging
-        if self.accelerator.is_main_process:
-            self._setup_logging()
-
-    def _create_optimizer(self):
-        """Create optimizer with weight decay."""
-        # Separate parameters for weight decay
-        no_decay = [
-            "bias",
-            "layer_norm.weight",
-            "ln_1.weight",
-            "ln_2.weight",
-            "norm.weight",
-        ]
-        optimizer_grouped_parameters = [
-            {
-                "params": [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay)],
-                "weight_decay": self.training_config["weight_decay"],
-            },
-            {
-                "params": [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay)],
-                "weight_decay": 0.0,
-            },
-        ]
-
-        optimizer = torch.optim.AdamW(
-            optimizer_grouped_parameters,
-            lr=self.training_config["learning_rate"],
-            betas=(
-                self.training_config["adam_beta1"],
-                self.training_config["adam_beta2"],
-            ),
-            eps=self.training_config["adam_epsilon"],
-        )
-
-        return optimizer
-
-    def _create_scheduler(self, num_training_steps: int):
-        """Create learning rate scheduler."""
-        warmup_steps = self.training_config["warmup_steps"]
-
-        if self.training_config["lr_scheduler_type"] == "linear":
-            scheduler = get_linear_schedule_with_warmup(
-                self.optimizer,
-                num_warmup_steps=warmup_steps,
-                num_training_steps=num_training_steps,
-            )
-        elif self.training_config["lr_scheduler_type"] == "cosine":
-            scheduler = get_cosine_schedule_with_warmup(
-                self.optimizer,
-                num_warmup_steps=warmup_steps,
-                num_training_steps=num_training_steps,
-            )
-        else:
-            raise ValueError(f"Unknown scheduler: {self.training_config['lr_scheduler_type']}")
-
-        return scheduler
-
-    def _setup_logging(self):
-        """Setup logging and tracking."""
-        # Initialize wandb
-        if "wandb" in self.training_config["report_to"]:
-            wandb.init(
-                project="olmo-training",
-                name=f"olmo-{self.training_config['model_size']}",
-                config=self.config,
-            )
-
-        # Create output directory
-        self.output_dir = self.config.get("output_dir", "./outputs")
-        os.makedirs(self.output_dir, exist_ok=True)
-
-        # Save config
-        with open(os.path.join(self.output_dir, "config.json"), "w") as f:
-            json.dump(self.config, f, indent=2)
-
-    def train(self):
-        """Main training loop."""
+        The trainer's primary responsibility: coordinate the training process
+        by delegating specific tasks to appropriate component managers.
+        """
         logger.info(f"Starting training for {self.training_config['model_size']} model")
         logger.info(f"Total training steps: {self.training_config['max_steps']}")
 
-        # Training metrics
-        total_loss = 0
+        # Setup components
+        self._prepare_training_components()
 
-        # Training loop
+        # Initialize logging
+        self.logging_manager.setup_logging()
+
+        # Training metrics
+        total_loss: float = 0.0
+
+        # Training loop with progress tracking
         progress_bar = tqdm(
             total=self.training_config["max_steps"],
             disable=not self.accelerator.is_local_main_process,
         )
 
-        for epoch in range(self.training_config["num_train_epochs"]):
-            self.model.train()
+        try:
+            for epoch in range(self.training_config["num_train_epochs"]):
+                self.model_manager.model.train()
 
-            for step, batch in enumerate(self.train_dataloader):
-                # Forward pass
-                outputs = self.model(**batch)
-                loss = outputs.loss
+                for step, batch in enumerate(self.data_manager.train_dataloader):
+                    # Validate batch structure
+                    if not is_batch_data(batch):
+                        logger.warning(f"Invalid batch structure at step {step}")
+                        continue
 
-                # Scale loss for gradient accumulation
-                loss = loss / self.training_config["gradient_accumulation_steps"]
-                total_loss += loss.item()
+                    # Forward pass
+                    loss = self._training_step(batch)
+                    total_loss += loss
 
-                # Backward pass
-                self.accelerator.backward(loss)
+                    # Gradient accumulation and optimization
+                    if self._should_update_weights(step):
+                        self._optimization_step()
+                        self.global_step += 1
+                        progress_bar.update(1)
 
-                # Gradient accumulation
-                if (step + 1) % self.training_config["gradient_accumulation_steps"] == 0:
-                    # Gradient clipping
-                    if self.training_config["max_grad_norm"] > 0:
-                        self.accelerator.clip_grad_norm_(
-                            self.model.parameters(),
-                            self.training_config["max_grad_norm"],
-                        )
+                        # Logging
+                        if self._should_log():
+                            self._log_training_metrics(total_loss)
+                            total_loss = 0.0
 
-                    # Optimizer step
-                    self.optimizer.step()
-                    self.lr_scheduler.step()
-                    self.optimizer.zero_grad()
+                        # Evaluation
+                        if self._should_evaluate():
+                            self._run_evaluation()
 
-                    self.global_step += 1
-                    progress_bar.update(1)
+                        # Checkpointing
+                        if self._should_save_checkpoint():
+                            self._save_checkpoint()
 
-                    # Logging
-                    if self.global_step % self.training_config["logging_steps"] == 0:
-                        avg_loss = total_loss / self.training_config["logging_steps"]
-                        self._log_metrics(
-                            {
-                                "train/loss": avg_loss,
-                                "train/learning_rate": self.lr_scheduler.get_last_lr()[0],
-                                "train/epoch": epoch,
-                                "train/global_step": self.global_step,
-                            }
-                        )
-                        total_loss = 0
+                        # Check completion
+                        if self.global_step >= self.training_config["max_steps"]:
+                            logger.info("Reached max steps. Stopping training.")
+                            return
 
-                    # Evaluation
-                    if self.global_step % self.training_config["eval_steps"] == 0 and self.eval_dataset is not None:
-                        eval_metrics = self.evaluate()
-                        self._log_metrics({f"eval/{k}": v for k, v in eval_metrics.items()})
+            logger.info("Training completed!")
 
-                        # Save best model
-                        if eval_metrics["loss"] < self.best_eval_loss:
-                            self.best_eval_loss = eval_metrics["loss"]
-                            self.save_model(os.path.join(self.output_dir, "best_model"))
+        finally:
+            # Cleanup
+            progress_bar.close()
+            self.logging_manager.finish_logging()
 
-                    # Save checkpoint
-                    if self.global_step % self.training_config["save_steps"] == 0:
-                        self.save_checkpoint()
+    def _prepare_training_components(self) -> None:
+        """Prepare all training components."""
+        # Calculate training steps for scheduler
+        train_dataloader = self.data_manager.train_dataloader
+        num_training_steps = len(train_dataloader) * self.training_config["num_train_epochs"]
+        if self.training_config["max_steps"] > 0:
+            num_training_steps = min(num_training_steps, self.training_config["max_steps"])
 
-                    # Check if done
-                    if self.global_step >= self.training_config["max_steps"]:
-                        logger.info("Reached max steps. Stopping training.")
-                        return
+        # Initialize optimizer and scheduler
+        _ = self.optimization_manager.optimizer  # Trigger creation
+        self.lr_scheduler = self.optimization_manager.get_scheduler(num_training_steps)
 
-        logger.info("Training completed!")
+    def _training_step(self, batch: BatchData) -> float:
+        """Execute a single training step."""
+        outputs = self.model_manager.model(**batch)
+        loss = outputs.loss
 
-    def evaluate(self) -> Dict[str, float]:
-        """Evaluate the model."""
-        logger.info("Running evaluation...")
-        self.model.eval()
+        # Scale loss for gradient accumulation
+        loss = loss / self.training_config["gradient_accumulation_steps"]
 
-        total_loss = 0
-        total_tokens = 0
+        # Backward pass
+        self.accelerator.backward(loss)
 
-        with torch.no_grad():
-            for batch in tqdm(self.eval_dataloader, desc="Evaluating"):
-                outputs = self.model(**batch)
-                loss = outputs.loss
+        return loss.item()
 
-                # Accumulate metrics
-                total_loss += loss.item() * batch["input_ids"].size(0)
-                total_tokens += batch["attention_mask"].sum().item()
-
-        # Calculate metrics
-        avg_loss = total_loss / len(self.eval_dataloader.dataset)
-        perplexity = torch.exp(torch.tensor(avg_loss)).item()
-
-        self.model.train()
-
-        return {"loss": avg_loss, "perplexity": perplexity, "tokens": total_tokens}
-
-    def save_checkpoint(self):
-        """Save training checkpoint."""
-        checkpoint_dir = os.path.join(self.output_dir, f"checkpoint-{self.global_step}")
-
-        if self.accelerator.is_main_process:
-            save_checkpoint(
-                model=self.accelerator.unwrap_model(self.model),
-                optimizer=self.optimizer,
-                lr_scheduler=self.lr_scheduler,
-                epoch=0,  # Calculate from global_step if needed
-                global_step=self.global_step,
-                config=self.config,
-                checkpoint_dir=checkpoint_dir,
+    def _optimization_step(self) -> None:
+        """Execute optimization step with gradient clipping."""
+        # Gradient clipping
+        if self.training_config["max_grad_norm"] > 0:
+            self.accelerator.clip_grad_norm_(
+                self.model_manager.model.parameters(),
+                self.training_config["max_grad_norm"],
             )
-            logger.info(f"Saved checkpoint to {checkpoint_dir}")
 
-    def save_model(self, output_dir: str):
-        """Save the model."""
-        if self.accelerator.is_main_process:
-            os.makedirs(output_dir, exist_ok=True)
-            unwrapped_model = self.accelerator.unwrap_model(self.model)
-            unwrapped_model.save_pretrained(output_dir)
-            self.tokenizer.save_pretrained(output_dir)
-            logger.info(f"Saved model to {output_dir}")
+        # Optimizer step
+        self.optimization_manager.optimizer.step()
+        self.lr_scheduler.step()
+        self.optimization_manager.optimizer.zero_grad()
 
-    def _log_metrics(self, metrics: Dict[str, float]):
-        """Log metrics to various trackers."""
-        if self.accelerator.is_main_process:
-            # Log to wandb
-            if "wandb" in self.training_config["report_to"]:
-                wandb.log(metrics, step=self.global_step)
+    def _should_update_weights(self, step: int) -> bool:
+        """Check if weights should be updated (gradient accumulation)."""
+        return (step + 1) % self.training_config["gradient_accumulation_steps"] == 0
 
-            # Log to console
-            logger.info(f"Step {self.global_step}: {metrics}")
+    def _should_log(self) -> bool:
+        """Check if metrics should be logged."""
+        return self.global_step % self.training_config["logging_steps"] == 0
+
+    def _should_evaluate(self) -> bool:
+        """Check if evaluation should be run."""
+        return (
+            self.global_step % self.training_config["eval_steps"] == 0 and self.data_manager.eval_dataloader is not None
+        )
+
+    def _should_save_checkpoint(self) -> bool:
+        """Check if checkpoint should be saved."""
+        return self.global_step % self.training_config["save_steps"] == 0
+
+    def _log_training_metrics(self, total_loss: float) -> None:
+        """Log training metrics."""
+        avg_loss = total_loss / self.training_config["logging_steps"]
+        metrics = {
+            "train/loss": avg_loss,
+            "train/learning_rate": self.lr_scheduler.get_last_lr()[0],
+            "train/global_step": self.global_step,
+        }
+        self.logging_manager.log_metrics(metrics, self.global_step)
+
+    def _run_evaluation(self) -> None:
+        """Run evaluation and log results."""
+        eval_dataloader = self.data_manager.eval_dataloader
+        if eval_dataloader is None:
+            return
+
+        eval_metrics = self.evaluation_manager.evaluate(self.model_manager.model, eval_dataloader)
+
+        # Log evaluation metrics
+        eval_metrics_with_prefix = {f"eval/{k}": v for k, v in eval_metrics.items()}
+        self.logging_manager.log_metrics(eval_metrics_with_prefix, self.global_step)
+
+        # Save best model
+        if eval_metrics["loss"] < self.best_eval_loss:
+            self.best_eval_loss = eval_metrics["loss"]
+            best_model_dir = f"{self.checkpoint_manager.output_dir}/best_model"
+            self.checkpoint_manager.save_model(self.model_manager.model, best_model_dir)
+
+    def _save_checkpoint(self) -> None:
+        """Save training checkpoint."""
+        additional_state = {
+            "best_eval_loss": self.best_eval_loss,
+        }
+
+        self.checkpoint_manager.save_checkpoint(
+            model=self.model_manager.model,
+            optimizer=self.optimization_manager.optimizer,
+            scheduler=self.lr_scheduler,
+            global_step=self.global_step,
+            additional_state=additional_state,
+        )
+
+    # =============================================================================
+    # Public API Methods
+    # =============================================================================
+
+    def evaluate(self) -> MetricsDict:
+        """Run evaluation and return metrics."""
+        eval_dataloader = self.data_manager.eval_dataloader
+        if eval_dataloader is None:
+            raise ValueError("No evaluation dataset provided")
+
+        return self.evaluation_manager.evaluate(self.model_manager.model, eval_dataloader)
+
+    def save_model(self, output_dir: str) -> None:
+        """Save the trained model."""
+        self.checkpoint_manager.save_model(self.model_manager.model, output_dir)
+
+    def load_checkpoint(self, checkpoint_path: str) -> None:
+        """Load a training checkpoint."""
+        checkpoint_state = self.checkpoint_manager.load_checkpoint(checkpoint_path)
+
+        # Restore model state
+        self.model_manager.model.load_state_dict(checkpoint_state["model_state_dict"])
+
+        # Restore optimizer state
+        self.optimization_manager.optimizer.load_state_dict(checkpoint_state["optimizer_state_dict"])
+
+        # Restore scheduler state
+        if hasattr(self, "lr_scheduler"):
+            self.lr_scheduler.load_state_dict(checkpoint_state["scheduler_state_dict"])
+
+        # Restore training state
+        self.global_step = checkpoint_state["global_step"]
+        self.best_eval_loss = checkpoint_state.get("best_eval_loss", float("inf"))
+
+        logger.info(f"Loaded checkpoint from step {self.global_step}")

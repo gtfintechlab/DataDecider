@@ -7,8 +7,8 @@ from pathlib import Path
 import torch
 import yaml
 from datasets import DatasetDict
-from transformers import AutoTokenizer
 
+# No tokenizer imports - tokenization handled by FinPileTokenizers
 from data_decide.olmo.models.configuration_olmo import OLMO_CONFIGS
 from data_decide.olmo.models.olmo_model import OLMoForCausalLM
 
@@ -84,15 +84,11 @@ def main():
     print(f"   - Total tokens in training: {total_tokens_training:,}")
     print(f"   - Dataset epochs: {epochs:.2f}")
 
-    # 6. Check tokenizer
-    print("\n6. Checking tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-    print("✅ Tokenizer loaded")
-    print(f"   - Vocab size: {len(tokenizer)}")
-    print(f"   - Model expects: {config.vocab_size}")
-
-    if len(tokenizer) != config.vocab_size:
-        print("⚠️  Warning: Tokenizer vocab size mismatch!")
+    # 6. Check tokenization
+    print("\n6. Checking tokenization...")
+    print("✅ Using FinPileTokenizers for all tokenization")
+    print(f"   - Model expects vocab size: {config.vocab_size}")
+    print("   - Ensure your data was tokenized with a compatible tokenizer")
 
     # 7. Test forward pass
     print("\n7. Testing forward pass...")

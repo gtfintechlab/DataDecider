@@ -7,12 +7,10 @@ from pathlib import Path
 import yaml
 from rich.console import Console
 from rich.progress import track
-# No tokenizer imports - tokenization is handled by FinPileTokenizers
 
+# No tokenizer imports - tokenization is handled by FinPileTokenizers
 from data_decide.olmo.data.data_curation import DataDecideCurator
-from data_decide.olmo.data.preprocessing import OLMoDataPreprocessor
 from data_decide.olmo.models.configuration_olmo import OLMO_CONFIGS
-from data_decide.olmo.training.callbacks import CheckpointCallback, LoggingCallback
 from data_decide.olmo.training.trainer import OLMoTrainer
 from data_decide.olmo.utils.logging_utils import get_logger, setup_logging
 
@@ -135,19 +133,27 @@ def main():
         train_dataset = proxy_datasets[int(best_recipe.split("_")[-1])]
     else:
         # Check if data is already tokenized with FinPileTokenizers
-        from data_decide.utils.finpile_data_loader import load_finpile_dataset
-        
+
         if os.path.exists(f"{args.data_path}.bin") and os.path.exists(f"{args.data_path}.idx"):
             logger.info("Loading pre-tokenized FinPile dataset...")
-            
+
             # Load using FinPileTokenizers format
             from data_decide.utils.finpile_data_loader import SimpleTapeDataset
-            
-            train_dataset = SimpleTapeDataset(args.data_path)
-            
+
+            # Configure dataset parameters from config
+            chunk_size = training_config.get("sequence_length", 4096)
+
+            train_dataset = SimpleTapeDataset(
+                prefix=args.data_path,
+                chunk_size=chunk_size,
+                eod_token_id=None,  # No packed sequences for now
+            )
+
+            logger.info(f"FinPile dataset loaded: {len(train_dataset):,} chunks of {chunk_size} tokens")
+
             # TODO: Add eval dataset support if needed
             eval_dataset = None
-            
+
             # Initialize trainer with datasets
             trainer = OLMoTrainer(
                 config=training_config,
@@ -155,24 +161,30 @@ def main():
                 eval_dataset=eval_dataset,
                 tokenizer=None,  # No tokenizer needed for pre-tokenized data
             )
-            
+
             # Start training
             trainer.train()
-            
+
             # Save final model
             trainer.save_model(os.path.join(args.output_dir, "final_model"))
-            
+
             logger.info("Training completed successfully!")
             return
         else:
             # Raw data needs tokenization
-            logger.error("Raw data tokenization not yet implemented. Please pre-tokenize your data using FinPileTokenizers.")
-            logger.error("Run: python -m FinPileTokenizers.fsiltok.main --input <your_data> --prefix <output_path> --tokenizer <tokenizer_name>")
+            logger.error(
+                "Raw data tokenization not yet implemented. Please pre-tokenize your data using FinPileTokenizers."
+            )
+            logger.error(
+                "Run: python -m FinPileTokenizers.fsiltok.main --input <your_data> --prefix <output_path> --tokenizer <tokenizer_name>"
+            )
             return
 
     # If we reach here, data_decide was used but we need pre-tokenized data
     logger.error("DataDecide requires pre-tokenized data. Please tokenize your curated data using FinPileTokenizers.")
-    logger.error("Run: python -m FinPileTokenizers.fsiltok.main --input <curated_data> --prefix <output_path> --tokenizer <tokenizer_name>")
+    logger.error(
+        "Run: python -m FinPileTokenizers.fsiltok.main --input <curated_data> --prefix <output_path> --tokenizer <tokenizer_name>"
+    )
 
 
 if __name__ == "__main__":
