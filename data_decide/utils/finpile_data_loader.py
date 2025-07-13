@@ -51,16 +51,54 @@ class SimpleTapeDataset(DocumentTapeDataset):
     def __getitem__(self, idx):
         """Get a training sample with early validation and detailed error messages."""
         # Early validation before any operations
-        from .validation import EarlyValidator, validate_dataset_bounds
+        try:
+            from .validation import EarlyValidator, validate_dataset_bounds
 
-        with EarlyValidator("dataset_access") as validator:
-            # Check dataset state first
-            validator.add_validation(lambda: self._validate_dataset_state())
+            with EarlyValidator("dataset_access") as validator:
+                # Check dataset state first
+                validator.add_validation(lambda: self._validate_dataset_state())
 
-            # Validate index bounds with detailed error messages
-            validator.add_validation(
-                lambda: validate_dataset_bounds(idx, self._total_chunks, f"SimpleTapeDataset({self.prefix})")
-            )
+                # Validate index bounds with detailed error messages
+                validator.add_validation(
+                    lambda: validate_dataset_bounds(idx, self._total_chunks, f"SimpleTapeDataset({self.prefix})")
+                )
+        except ImportError:
+            # Fallback if validation module isn't available
+            self._validate_dataset_state()
+            if idx < 0 or idx >= self._total_chunks:
+                raise IndexError(f"Index {idx} out of bounds for dataset with {self._total_chunks} chunks")
+
+        # Get data using parent class
+        data = super().__getitem__(idx)
+        
+        # Handle different return types from parent
+        if isinstance(data, dict):
+            # Parent returned packed data with input_ids, position_ids, mask
+            tokens = torch.tensor(data["input_ids"], dtype=torch.long)
+            labels = tokens.clone()
+            attention_mask = torch.ones_like(tokens, dtype=torch.long)
+            
+            result = {
+                "input_ids": tokens,
+                "labels": labels,
+                "attention_mask": attention_mask,
+            }
+            
+            # Add packed features if available
+            if "position_ids" in data:
+                result["position_ids"] = torch.tensor(data["position_ids"], dtype=torch.long)
+            if "mask" in data:
+                result["packed_mask"] = torch.tensor(data["mask"], dtype=torch.bool)
+                
+            return result
+        else:
+            # Parent returned simple token array
+            tokens = torch.tensor(data, dtype=torch.long)
+            return {
+                "input_ids": tokens,
+                "labels": tokens.clone(),
+                "attention_mask": torch.ones_like(tokens, dtype=torch.long),
+            }
 
     def _validate_dataset_state(self):
         """Validate that the dataset is in a valid state for access."""
@@ -89,46 +127,7 @@ class SimpleTapeDataset(DocumentTapeDataset):
                 ],
             )
 
-        # Fixed: Check if handle is None properly (bug in original DocumentTapeDataset)
-        if self._handle is None:
-            try:
-                self._handle = np.memmap(
-                    f"{self.prefix}.bin", dtype=self._token_dtype, mode="r", shape=(self._total_tokens,)
-                )
-            except (OSError, ValueError) as e:
-                raise RuntimeError(f"Failed to open data file '{self.prefix}.bin': {e}")
-
-        if self._offsets is None:
-            try:
-                self._offsets = np.memmap(
-                    f"{self.prefix}.idx", dtype=self._offsets_dtype, mode="r", shape=(self._total_docs,)
-                )
-            except (OSError, ValueError) as e:
-                raise RuntimeError(f"Failed to open index file '{self.prefix}.idx': {e}")
-
-        id_start = self._chunk_size * idx
-        id_end = min(id_start + self._chunk_size, self._total_tokens)
-
-        tokens = self._handle[id_start:id_end]
-        if len(tokens) == 0:
-            tokens = np.array([], dtype=self._token_dtype)
-
-        # Handle packed mode if eod_token_id is set
-        if self._eod_token_id is not None:
-            # Note: Packed sequence handling is implemented in PackedTapeDataset class
-            # This simple version treats all tokens equally
-            pass
-
-        # Convert to torch tensors
-        input_ids = torch.tensor(tokens, dtype=torch.long)
-        labels = input_ids.clone()
-        attention_mask = torch.ones_like(input_ids, dtype=torch.long)
-
-        return {
-            "input_ids": input_ids,
-            "labels": labels,
-            "attention_mask": attention_mask,
-        }
+        # This validation logic has been moved to __getitem__ method above
 
 
 class PackedTapeDataset(DocumentTapeDataset):
@@ -150,8 +149,8 @@ class PackedTapeDataset(DocumentTapeDataset):
         data = super().__getitem__(idx)
 
         if isinstance(data, dict):
-            # Use the packed features
-            tokens = torch.tensor(data["tokens"], dtype=torch.long)
+            # Use the packed features - note API change: "tokens" -> "input_ids"
+            tokens = torch.tensor(data["input_ids"], dtype=torch.long)
             position_ids = torch.tensor(data["position_ids"], dtype=torch.long)
             # Note: mask is 2D causal mask, we'll create 1D attention mask
             attention_mask = torch.ones_like(tokens, dtype=torch.long)
@@ -173,7 +172,7 @@ class PackedTapeDataset(DocumentTapeDataset):
             }
 
 
-def load_finpile_dataset(prefix, batch_size=32, packed=False, eod_token_id=None, **kwargs):
+def load_finpile_dataset(prefix, batch_size=32, packed=False, eod_token_id=None, use_builtin_dataloader=True, **kwargs):
     """Load a FinPile dataset.
 
     Args:
@@ -181,6 +180,7 @@ def load_finpile_dataset(prefix, batch_size=32, packed=False, eod_token_id=None,
         batch_size: Batch size
         packed: Whether to use packed sequences with document boundaries
         eod_token_id: End of document token ID (required for packed=True)
+        use_builtin_dataloader: Whether to use the new built-in get_dataloader method
         **kwargs: Additional args for DataLoader
 
     Returns:
@@ -193,12 +193,28 @@ def load_finpile_dataset(prefix, batch_size=32, packed=False, eod_token_id=None,
     else:
         dataset = SimpleTapeDataset(prefix, eod_token_id=eod_token_id)
 
-    return DataLoader(dataset, batch_size=batch_size, **kwargs)
+    # Use the new built-in get_dataloader method if available and requested
+    if use_builtin_dataloader and hasattr(DocumentTapeDataset, 'get_dataloader'):
+        # Note: The built-in method forces drop_last=True and sets collate_fn automatically
+        # Remove these from kwargs if present to avoid conflicts
+        kwargs_clean = {k: v for k, v in kwargs.items() if k not in ['collate_fn', 'drop_last']}
+        return DocumentTapeDataset.get_dataloader(dataset, batch_size=batch_size, **kwargs_clean)
+    else:
+        # Fallback to our custom implementation
+        return DataLoader(dataset, batch_size=batch_size, **kwargs)
 
 
 def create_data_collator_for_finpile():
-    """Create a data collator for FinPile data that handles variable length sequences."""
-
+    """Create a data collator for FinPile data that handles variable length sequences.
+    
+    Note: The new FinPileTokenizers includes a built-in collate_chunks method.
+    This function is kept for backward compatibility.
+    """
+    # Try to use the built-in collation method if available
+    if hasattr(DocumentTapeDataset, 'collate_chunks'):
+        return DocumentTapeDataset.collate_chunks
+    
+    # Fallback to our custom implementation
     def collate_fn(batch):
         """Collate function for FinPile data."""
         # All sequences should be the same length (chunk_size), so simple stacking works

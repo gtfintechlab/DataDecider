@@ -210,7 +210,7 @@ def verify_subsample(prefix: str, expected_chunks: int = None, chunk_size: int =
 
     # Test loading
     try:
-        from FinPileTokenizers.fsiltok.utils.data import DocumentTapeDataset
+        from fsiltok.utils.data import DocumentTapeDataset
 
         dataset = DocumentTapeDataset(prefix, chunk_size=chunk_size)
         sample = dataset[0]

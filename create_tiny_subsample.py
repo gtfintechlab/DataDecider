@@ -63,7 +63,7 @@ def create_tiny_subsample():
         import sys
 
         sys.path.append(".")
-        from FinPileTokenizers.fsiltok.utils.data import DocumentTapeDataset
+        from fsiltok.utils.data import DocumentTapeDataset
 
         dataset = DocumentTapeDataset(str(target_prefix), chunk_size=4096)
         print(f"  Dataset length: {len(dataset):,} chunks")

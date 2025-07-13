@@ -6,8 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
-# Add the project root to Python path
+# Add the project root and submodule to Python path
 sys.path.append(str(Path(__file__).parent))
+sys.path.append(str(Path(__file__).parent / "FinPileTokenizers"))
 
 
 def quick_file_check():
@@ -53,7 +54,7 @@ def quick_dataset_test():
     """Quick DocumentTapeDataset test."""
     print("\nDocumentTapeDataset test:")
     try:
-        from FinPileTokenizers.fsiltok.utils.data import DocumentTapeDataset
+        from fsiltok.utils.data import DocumentTapeDataset
 
         prefix = "/storage/coda1/p-schava6/0/shared/finpile/datamixes/0fp-100dolma"
 

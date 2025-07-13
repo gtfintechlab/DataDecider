@@ -71,7 +71,7 @@ def debug_raw_documenttape():
     prefix = "data/finpile_subsamples/finpile_tiny"
 
     try:
-        from FinPileTokenizers.fsiltok.utils.data import DocumentTapeDataset
+        from fsiltok.utils.data import DocumentTapeDataset
 
         dataset = DocumentTapeDataset(prefix, chunk_size=4096)
         print(f"Raw dataset length: {len(dataset)}")
