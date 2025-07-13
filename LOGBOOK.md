@@ -977,3 +977,51 @@ Learning:
 3. Be specific with generic types - Dict[str, Any] not just Dict
 4. Type casting with cast() helps when you know more than the type checker
 5. Dataset loading can return different types - always check isinstance()
+
+[2025-07-12 18:45] Added FinPileTokenizers as Git Submodule
+
+Context: User requested adding https://github.com/gtfintechlab/FinPileTokenizers as a submodule to make it accessible and usable by code in this repository
+
+Action:
+1. Initially attempted direct submodule add with HTTPS URL, but got authentication errors
+2. Tried SSH URL but got host key verification failed
+3. Configured git to use gh CLI for authentication with: `git config --global credential.helper "!gh auth git-credential"`
+4. Successfully added submodule with: `git submodule add https://github.com/gtfintechlab/FinPileTokenizers.git FinPileTokenizers`
+5. Verified submodule was properly initialized and contains expected commits
+
+Result:
+- Successfully added FinPileTokenizers as a git submodule at path: FinPileTokenizers/
+- Created .gitmodules file with submodule configuration
+- Submodule points to: https://github.com/gtfintechlab/FinPileTokenizers.git
+- Verified submodule contains 2 commits (init and Initial commit)
+- Changes staged and ready to be committed
+
+Learning: When adding private GitHub repositories as submodules, authentication can be tricky. Using gh CLI's credential helper (`git config --global credential.helper "!gh auth git-credential"`) provides a clean solution that works with GitHub's authentication.
+
+[2025-07-12 19:30] Replaced DataDecider Tokenization with FinPileTokenizers
+
+Context: User requested removing all tokenization code from DataDecider and using FinPileTokenizers directly instead. The current tokenization implementation is overengineered for SLURM clusters and needs simplification.
+
+Action:
+1. Created simple data loader (finpile_data_loader.py) to wrap FinPileTokenizers' DocumentTapeDataset for PyTorch
+2. Updated train.py to:
+   - Remove all AutoTokenizer imports
+   - Only support FinPileTokenizers format (.bin/.idx files)
+   - Remove HuggingFace dataset loading code
+   - Simplify to only load pre-tokenized data
+3. Removed all tokenization-related files:
+   - unified_tokenizer.py
+   - test_tokenization_e2e.py
+   - build_dataset_unified.py
+   - count_tokens_unified.py
+   - tokenized_dataset_loader.py
+   - All tokenizer tests and launch scripts
+
+Result:
+- DataDecider now exclusively uses FinPileTokenizers for all tokenization needs
+- Simplified data loading - just point to .bin/.idx files created by FinPileTokenizers
+- Removed ~2000+ lines of redundant tokenization code
+- Training script now requires pre-tokenized data using: `python -m FinPileTokenizers.fsiltok.main`
+- Much simpler architecture suitable for SLURM cluster usage
+
+Learning: When working on large clusters with specific constraints, simpler is better. The original tokenization infrastructure was overengineered. By delegating tokenization to a dedicated submodule (FinPileTokenizers) and only handling pre-tokenized data, the codebase is much cleaner and easier to maintain.
