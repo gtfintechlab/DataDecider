@@ -47,9 +47,10 @@ output_dir.mkdir(parents=True, exist_ok=True)
 
 # Create progressively larger subsamples
 configs = [
-    ('small', 100),      # ~400K tokens
-    ('medium', 1000),    # ~4M tokens  
-    ('large', 10000),    # ~40M tokens
+    ('tiny', 100),      # ~400K tokens
+    ('small', 1000),    # ~4M tokens  
+    ('medium', 10000),    # ~40M tokens
+    ('large', 100000),    # ~400M tokens
 ]
 
 source_prefix = '${SOURCE_DATA}'

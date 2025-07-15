@@ -33,7 +33,7 @@ echo "Running DataDecide full-scale training comparison..."
 
 # Run full-scale training with DataDecide methodology
 uv run python train_with_best_recipe.py \
-    --dataset-prefix data/finpile_subsamples/finpile_medium \
+    --dataset-prefix data/finpile_subsamples/finpile_large \
     --model-size 4M \
     --max-steps 1000 \
     --batch-size 8 \

@@ -697,3 +697,31 @@ Tools Used:
 - Manual review of TODO comments and code patterns
 
 Learning: Regular aggressive cleanup is essential for maintaining code quality in large projects. Automated tools like ruff can handle most formatting and import issues efficiently, but human review is still needed for meaningful refactoring and documentation improvements. The cleanup removed significant clutter while preserving all functional code and important data files.
+
+[2025-07-15 12:00] Investigation: get_model_config Function Usage Analysis
+
+Context: Investigating whether the get_model_config function and olmo_4m.yaml model config file are actually used in the training pipeline or if they're redundant with the training config that already contains model parameters.
+
+Action: Comprehensive search through codebase for actual usage of:
+1. get_model_config function calls
+2. config_utils module imports
+3. Direct loading of olmo_4m.yaml file
+4. Analysis of training pipeline configuration flow
+
+Result: Found that the get_model_config function and separate model config files are NOT used in the training pipeline:
+
+1. **No actual usage found**: grep searches revealed no calls to get_model_config() anywhere in the codebase
+2. **config_utils only imported but not used**: Only found import in utils/__init__.py but no actual usage
+3. **Training uses hardcoded configs**: The actual training pipeline uses OLMO_CONFIGS dictionary from configuration_olmo.py
+4. **Model creation flow**: 
+   - train.py calls OLMoTrainer with training config
+   - OLMoTrainer uses OLMoModelManager.create_model()
+   - create_model() uses OLMO_CONFIGS[model_size] from configuration_olmo.py
+   - Model parameters are hardcoded in MODEL_SCALING_CONFIG dict
+
+5. **Configuration structure**:
+   - configs/training_configs/olmo_4m_training.yaml: Training hyperparameters only (learning rate, batch size, etc.)
+   - configs/model_configs/olmo_4m.yaml: Model architecture params (REDUNDANT - not used)
+   - Model architecture comes from configuration_olmo.py hardcoded values
+
+Learning: The model config files in configs/model_configs/ directory and the get_model_config() function are completely redundant. The training pipeline gets model architecture from hardcoded constants in configuration_olmo.py, while training hyperparameters come from the training config files. The separate model config files serve no purpose in the current implementation.
