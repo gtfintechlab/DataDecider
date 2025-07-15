@@ -1,0 +1,40 @@
+{
+  "best_recipe": {
+    "name": "high_quality",
+    "description": "Top 25% by quality score",
+    "results": {
+      "final_train_loss": 14.613993644714355,
+      "final_eval_loss": 14.790374040603638,
+      "best_eval_loss": 15.094900798797607,
+      "train_perplexity": 2222167.535189156,
+      "eval_perplexity": 2650805.3053361215,
+      "best_perplexity": 3594447.3100180845,
+      "training_time": 70.8714108467102,
+      "total_steps": 1000
+    }
+  },
+  "baseline": {
+    "name": "random_baseline",
+    "description": "Random data selection baseline",
+    "results": {
+      "final_train_loss": 15.75253963470459,
+      "final_eval_loss": 14.918012332916259,
+      "best_eval_loss": 15.242268943786621,
+      "train_perplexity": 6938107.73543782,
+      "eval_perplexity": 3011691.1804558598,
+      "best_perplexity": 4165175.392690635,
+      "training_time": 57.57676291465759,
+      "total_steps": 1000
+    }
+  },
+  "improvement_percent": 13.702378144125868,
+  "config": {
+    "model_size": "4M",
+    "sequence_length": 512,
+    "batch_size": 8,
+    "learning_rate": 0.0001,
+    "max_steps": 1000,
+    "max_epochs": 10,
+    "eval_interval": 50
+  }
+}

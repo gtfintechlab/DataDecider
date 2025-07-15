@@ -7,12 +7,10 @@ from pathlib import Path
 import yaml
 from rich.console import Console
 from rich.progress import track
-from transformers import AutoTokenizer
 
+# No tokenizer imports - tokenization is handled by FinPileTokenizers
 from data_decide.olmo.data.data_curation import DataDecideCurator
-from data_decide.olmo.data.preprocessing import OLMoDataPreprocessor
 from data_decide.olmo.models.configuration_olmo import OLMO_CONFIGS
-from data_decide.olmo.training.callbacks import CheckpointCallback, LoggingCallback
 from data_decide.olmo.training.trainer import OLMoTrainer
 from data_decide.olmo.utils.logging_utils import get_logger, setup_logging
 
@@ -70,8 +68,7 @@ def main():
     data_config_path = Path(args.config_file).parent.parent / "data_configs" / "data_curation.yaml"
     data_config = load_config(str(data_config_path))
 
-    # Initialize tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(data_config["data_curation"]["preprocessing"]["tokenizer"])
+    # No tokenizer needed - FinPileTokenizers handles tokenization
 
     # Data curation with DataDecide
     if args.use_data_decide:
@@ -80,7 +77,7 @@ def main():
         console.print("\n[bold cyan]Running DataDecide data curation...[/bold cyan]")
         curator = DataDecideCurator(
             data_path=args.data_path,
-            tokenizer_name=data_config["data_curation"]["preprocessing"]["tokenizer"],
+            tokenizer_name=None,  # Tokenization will be done by FinPileTokenizers
             proxy_model_size=data_config["data_curation"]["proxy_model_size"],
             num_proxy_steps=data_config["data_curation"]["proxy_training_steps"],
         )
@@ -135,58 +132,38 @@ def main():
         # Use the best dataset
         train_dataset = proxy_datasets[int(best_recipe.split("_")[-1])]
     else:
-        # Direct data loading for pre-tokenized dataset
-        from datasets import DatasetDict
+        # Check if data is already tokenized with FinPileTokenizers
 
-        # Check if this is a pre-tokenized dataset
-        dataset_dict_path = os.path.join(args.data_path, "dataset_dict.json")
-        if os.path.exists(dataset_dict_path):
-            logger.info("Loading pre-tokenized dataset...")
-            dataset = DatasetDict.load_from_disk(args.data_path)
-            train_dataset = dataset["train"]
-            eval_dataset = dataset["validation"]
+        if os.path.exists(f"{args.data_path}.bin") and os.path.exists(f"{args.data_path}.idx"):
+            logger.info("Loading pre-tokenized FinPile dataset...")
 
-            # Skip preprocessing for pre-tokenized data
-            logger.info(f"Train dataset size: {len(train_dataset)}")
-            logger.info(f"Eval dataset size: {len(eval_dataset)}")
+            # Load using FinPileTokenizers format
+            from data_decide.utils.finpile_data_loader import SimpleTapeDataset
 
-            # Initialize callbacks
-            callbacks = []
+            # Configure dataset parameters from config
+            chunk_size = training_config.get("sequence_length", 4096)
 
-            # Add logging callback with W&B support
-            if "wandb" in training_config["training"].get("report_to", []):
-                logging_callback = LoggingCallback(
-                    log_interval=training_config["training"]["logging_steps"],
-                    log_to_wandb=True,
-                    log_to_tensorboard="tensorboard" in training_config["training"].get("report_to", []),
-                    log_dir=training_config["training"].get("logging_dir", "./logs"),
-                )
-                callbacks.append(logging_callback)
-
-            # Add checkpoint callback
-            checkpoint_callback = CheckpointCallback(
-                save_dir=args.output_dir,
-                save_interval=training_config["training"]["save_steps"],
-                save_total_limit=training_config["training"].get("save_total_limit", 5),
+            train_dataset = SimpleTapeDataset(
+                prefix=args.data_path,
+                chunk_size=chunk_size,
+                eod_token_id=None,  # No packed sequences for now
             )
-            callbacks.append(checkpoint_callback)
 
-            # Initialize trainer
-            # TODO: Add callback support to OLMoTrainer
+            logger.info(f"FinPile dataset loaded: {len(train_dataset):,} chunks of {chunk_size} tokens")
+
+            # TODO: Add eval dataset support if needed
+            eval_dataset = None
+
+            # Initialize trainer with datasets
             trainer = OLMoTrainer(
                 config=training_config,
                 train_dataset=train_dataset,
                 eval_dataset=eval_dataset,
-                tokenizer=tokenizer,
+                tokenizer=None,  # No tokenizer needed for pre-tokenized data
             )
 
             # Start training
             trainer.train()
-
-            # Final evaluation
-            logger.info("Running final evaluation...")
-            final_metrics = trainer.evaluate()
-            logger.info(f"Final metrics: {final_metrics}")
 
             # Save final model
             trainer.save_model(os.path.join(args.output_dir, "final_model"))
@@ -194,57 +171,20 @@ def main():
             logger.info("Training completed successfully!")
             return
         else:
-            # Load raw JSON data
-            from datasets import Dataset
+            # Raw data needs tokenization
+            logger.error(
+                "Raw data tokenization not yet implemented. Please pre-tokenize your data using FinPileTokenizers."
+            )
+            logger.error(
+                "Run: python -m FinPileTokenizers.fsiltok.main --input <your_data> --prefix <output_path> --tokenizer <tokenizer_name>"
+            )
+            return
 
-            raw_data = DataDecideCurator(args.data_path).load_json_data()
-            train_dataset = Dataset.from_list([{"text": doc["text"]} for doc in raw_data])
-
-    # Preprocessing
-    logger.info("Preprocessing data...")
-    preprocessor = OLMoDataPreprocessor(
-        tokenizer=tokenizer,
-        max_length=data_config["data_curation"]["preprocessing"]["max_length"],
-        concatenate_documents=data_config["data_curation"]["preprocessing"]["concatenate_documents"],
-        add_eos_token=data_config["data_curation"]["preprocessing"]["add_eos_token"],
+    # If we reach here, data_decide was used but we need pre-tokenized data
+    logger.error("DataDecide requires pre-tokenized data. Please tokenize your curated data using FinPileTokenizers.")
+    logger.error(
+        "Run: python -m FinPileTokenizers.fsiltok.main --input <curated_data> --prefix <output_path> --tokenizer <tokenizer_name>"
     )
-
-    train_dataset = preprocessor.create_training_dataset(train_dataset)
-
-    # Split for evaluation
-    split = train_dataset.train_test_split(test_size=0.01, seed=42)
-    train_dataset = split["train"]
-    eval_dataset = split["test"]
-
-    logger.info(f"Train dataset size: {len(train_dataset)}")
-    logger.info(f"Eval dataset size: {len(eval_dataset)}")
-
-    # Initialize trainer
-    trainer = OLMoTrainer(
-        config=training_config,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        tokenizer=tokenizer,
-    )
-
-    # Resume from checkpoint if specified
-    if args.resume_from_checkpoint:
-        logger.info(f"Resuming from checkpoint: {args.resume_from_checkpoint}")
-        # Implementation for checkpoint resumption
-        pass
-
-    # Start training
-    trainer.train()
-
-    # Final evaluation
-    logger.info("Running final evaluation...")
-    final_metrics = trainer.evaluate()
-    logger.info(f"Final metrics: {final_metrics}")
-
-    # Save final model
-    trainer.save_model(os.path.join(args.output_dir, "final_model"))
-
-    logger.info("Training completed successfully!")
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ sys.path.append(str(Path(__file__).parent))
 from accelerate import Accelerator
 from datasets import DatasetDict
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer, DataCollatorForLanguageModeling, get_cosine_schedule_with_warmup
+from transformers import get_cosine_schedule_with_warmup
 
 from data_decide.olmo.models.configuration_olmo import OLMO_CONFIGS
 
@@ -205,12 +205,10 @@ def main():
     # Watch model with W&B
     wandb.watch(model, log_freq=100)
 
-    # Initialize tokenizer and data collator
-    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8)
+    # No tokenizer needed - data is pre-tokenized with FinPileTokenizers
+    # Simple data collator that just returns the batch as-is
+    def data_collator(batch):
+        return {key: torch.stack([torch.tensor(example[key]) for example in batch]) for key in batch[0]}
 
     # Create dataloaders
     train_dataloader = DataLoader(
@@ -414,7 +412,7 @@ def main():
 
                         if accelerator.is_main_process:
                             unwrapped_model.save_pretrained(checkpoint_dir)
-                            tokenizer.save_pretrained(checkpoint_dir)
+                            # No tokenizer to save - tokenization handled by FinPileTokenizers
 
                             # Save to W&B
                             wandb.save(str(checkpoint_dir / "*"))
@@ -438,7 +436,7 @@ def main():
 
     if accelerator.is_main_process:
         unwrapped_model.save_pretrained(final_model_dir)
-        tokenizer.save_pretrained(final_model_dir)
+        # No tokenizer to save - tokenization handled by FinPileTokenizers
 
         # Save to W&B
         wandb.save(str(final_model_dir / "*"))

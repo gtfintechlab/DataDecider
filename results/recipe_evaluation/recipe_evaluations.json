@@ -1,0 +1,74 @@
+[
+  {
+    "name": "high_quality",
+    "description": "Top 25% by quality score",
+    "eval_perplexity": 10842237280914.21,
+    "train_perplexity": 19374045866123.812,
+    "convergence_speed": 0.5702655792236329,
+    "training_time": 34.845635414123535,
+    "performance_score": 0.9865982201435228,
+    "efficiency_score": 0.7715004959106446,
+    "overall_score": 0.9005591304503716,
+    "ranking": 1
+  },
+  {
+    "name": "high_diversity",
+    "description": "Top 25% by diversity score",
+    "eval_perplexity": 19614366561440.918,
+    "train_perplexity": 7660797036236.872,
+    "convergence_speed": 0.5509463653564454,
+    "training_time": 32.00078511238098,
+    "performance_score": 0.9839717042961202,
+    "efficiency_score": 0.7749400844573975,
+    "overall_score": 0.9003590563606312,
+    "ranking": 2
+  },
+  {
+    "name": "financial_focus",
+    "description": "Financial domain documents only",
+    "eval_perplexity": 18999288907185.77,
+    "train_perplexity": 45396535576644.06,
+    "convergence_speed": 0.5704725265502929,
+    "training_time": 33.53128004074097,
+    "performance_score": 0.9730815370919768,
+    "efficiency_score": 0.7822222862243652,
+    "overall_score": 0.8967378367449321,
+    "ranking": 3
+  },
+  {
+    "name": "balanced_qd",
+    "description": "Balanced quality and diversity",
+    "eval_perplexity": 101107396458809.36,
+    "train_perplexity": 141725236722987.78,
+    "convergence_speed": 0.5451766738891602,
+    "training_time": 32.870591163635254,
+    "performance_score": 0.886707251461937,
+    "efficiency_score": 0.7622119445800782,
+    "overall_score": 0.8369091287091934,
+    "ranking": 4
+  },
+  {
+    "name": "long_context",
+    "description": "Documents with >500 tokens",
+    "eval_perplexity": 119963208384551.7,
+    "train_perplexity": 99460485958832.5,
+    "convergence_speed": 0.5223535919189453,
+    "training_time": 33.13363194465637,
+    "performance_score": 0.8861876083431639,
+    "efficiency_score": 0.7372845363616942,
+    "overall_score": 0.826626379550576,
+    "ranking": 5
+  },
+  {
+    "name": "random_baseline",
+    "description": "Random 25% of documents",
+    "eval_perplexity": 112005781843858.4,
+    "train_perplexity": 320294155458926.94,
+    "convergence_speed": 0.5456697540283203,
+    "training_time": 36.9503173828125,
+    "performance_score": 0.825507706071621,
+    "efficiency_score": 0.7300672149658203,
+    "overall_score": 0.7873315096293008,
+    "ranking": 6
+  }
+]

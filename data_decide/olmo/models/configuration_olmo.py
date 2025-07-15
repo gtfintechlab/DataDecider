@@ -1,7 +1,34 @@
 # src/models/configuration_olmo.py
-from typing import Optional
+from typing import Dict, Optional
 
 from transformers import PretrainedConfig
+
+# Configuration constants with clear documentation
+# Based on GPT-NeoX-20B tokenizer which is commonly used for financial text
+FINPILE_VOCAB_SIZE = 50277  # Exact vocabulary size for FinPile tokenizer compatibility
+
+# Standard architecture ratios following transformer best practices
+INTERMEDIATE_SIZE_RATIO = 4  # Standard MLP expansion ratio (hidden_size * 4)
+HEAD_DIM = 64  # Standard attention head dimension for most transformer models
+
+# Model scaling parameters based on empirical research
+MODEL_SCALING_CONFIG = {
+    # Format: (hidden_size, num_layers, num_heads, target_params_millions)
+    "4M": (64, 8, 8, 4),
+    "6M": (96, 8, 8, 6),
+    "8M": (128, 8, 8, 8),
+    "10M": (144, 8, 8, 10),
+    "14M": (192, 8, 8, 14),
+    "16M": (208, 8, 8, 16),
+    "20M": (192, 8, 8, 20),  # Different layer config for efficiency
+    "60M": (384, 16, 12, 60),  # Start using more layers
+    "90M": (528, 16, 12, 90),
+    "150M": (768, 12, 12, 150),  # Standard transformer-base dimensions
+    "300M": (1024, 16, 16, 300),
+    "530M": (1344, 16, 16, 530),
+    "750M": (1536, 16, 16, 750),
+    "1B": (2048, 16, 16, 1000),  # 1 billion parameters
+}
 
 
 class OLMoConfig(PretrainedConfig):
@@ -51,91 +78,75 @@ class OLMoConfig(PretrainedConfig):
         self.tie_word_embeddings = tie_word_embeddings
 
 
-# Predefined configurations for each model size
-OLMO_CONFIGS = {
-    "4M": OLMoConfig(
-        vocab_size=50277,  # GPT-NeoX-20B tokenizer actual size
-        hidden_size=64,
-        num_hidden_layers=8,
-        num_attention_heads=8,
-        intermediate_size=256,
-    ),
-    "6M": OLMoConfig(
-        hidden_size=96,
-        num_hidden_layers=8,
-        num_attention_heads=8,
-        intermediate_size=384,
-    ),
-    "8M": OLMoConfig(
-        hidden_size=128,
-        num_hidden_layers=8,
-        num_attention_heads=8,
-        intermediate_size=512,
-    ),
-    "10M": OLMoConfig(
-        hidden_size=144,
-        num_hidden_layers=8,
-        num_attention_heads=8,
-        intermediate_size=576,
-    ),
-    "14M": OLMoConfig(
-        hidden_size=192,
-        num_hidden_layers=8,
-        num_attention_heads=8,
-        intermediate_size=768,
-    ),
-    "16M": OLMoConfig(
-        hidden_size=208,
-        num_hidden_layers=8,
-        num_attention_heads=8,
-        intermediate_size=832,
-    ),
-    "20M": OLMoConfig(
-        hidden_size=192,
-        num_hidden_layers=8,
-        num_attention_heads=8,
-        intermediate_size=768,
-    ),
-    "60M": OLMoConfig(
-        hidden_size=384,
-        num_hidden_layers=16,
-        num_attention_heads=12,
-        intermediate_size=1536,
-    ),
-    "90M": OLMoConfig(
-        hidden_size=528,
-        num_hidden_layers=16,
-        num_attention_heads=12,
-        intermediate_size=2112,
-    ),
-    "150M": OLMoConfig(
-        hidden_size=768,
-        num_hidden_layers=12,
-        num_attention_heads=12,
-        intermediate_size=3072,
-    ),
-    "300M": OLMoConfig(
-        hidden_size=1024,
-        num_hidden_layers=16,
-        num_attention_heads=16,
-        intermediate_size=4096,
-    ),
-    "530M": OLMoConfig(
-        hidden_size=1344,
-        num_hidden_layers=16,
-        num_attention_heads=16,
-        intermediate_size=5376,
-    ),
-    "750M": OLMoConfig(
-        hidden_size=1536,
-        num_hidden_layers=16,
-        num_attention_heads=16,
-        intermediate_size=6144,
-    ),
-    "1B": OLMoConfig(
-        hidden_size=2048,
-        num_hidden_layers=16,
-        num_attention_heads=16,
-        intermediate_size=8192,
-    ),
-}
+class ModelConfigFactory:
+    """Factory for creating OLMo configurations with validation and consistency checks."""
+
+    @staticmethod
+    def create_config(model_size: str, **overrides) -> OLMoConfig:
+        """Create a model configuration for the specified size.
+
+        Args:
+            model_size: Model size identifier (e.g., "4M", "150M", "1B")
+            **overrides: Additional parameters to override defaults
+
+        Returns:
+            OLMoConfig: Configured model
+
+        Raises:
+            ValueError: If model_size is not supported or configuration is invalid
+        """
+        if model_size not in MODEL_SCALING_CONFIG:
+            available_sizes = list(MODEL_SCALING_CONFIG.keys())
+            raise ValueError(f"Unsupported model size '{model_size}'. Available: {available_sizes}")
+
+        hidden_size, num_layers, num_heads, target_params = MODEL_SCALING_CONFIG[model_size]
+
+        # Calculate intermediate size with standard ratio
+        intermediate_size = hidden_size * INTERMEDIATE_SIZE_RATIO
+
+        # Validate head dimensions
+        if hidden_size % num_heads != 0:
+            raise ValueError(f"hidden_size ({hidden_size}) must be divisible by num_attention_heads ({num_heads})")
+
+        head_dim = hidden_size // num_heads
+        # DataDecide uses head dimensions from 8 to 64 based on empirical validation
+        if head_dim < 4 or head_dim > 128:
+            raise ValueError(
+                f"Head dimension {head_dim} is outside valid range [4, 128]. DataDecide uses head_dim >= 8."
+            )
+
+        config = OLMoConfig(
+            vocab_size=FINPILE_VOCAB_SIZE,
+            hidden_size=hidden_size,
+            num_hidden_layers=num_layers,
+            num_attention_heads=num_heads,
+            intermediate_size=intermediate_size,
+            **overrides,  # Allow custom overrides
+        )
+
+        return config
+
+    @staticmethod
+    def get_available_sizes() -> list[str]:
+        """Get list of available model sizes."""
+        return list(MODEL_SCALING_CONFIG.keys())
+
+    @staticmethod
+    def estimate_parameters(model_size: str) -> int:
+        """Estimate the number of parameters for a model size."""
+        if model_size not in MODEL_SCALING_CONFIG:
+            raise ValueError(f"Unknown model size: {model_size}")
+        return MODEL_SCALING_CONFIG[model_size][3] * 1_000_000  # Convert millions to actual count
+
+
+# Predefined configurations using the factory pattern
+def _create_legacy_configs() -> Dict[str, OLMoConfig]:
+    """Create legacy configuration dictionary for backward compatibility."""
+    configs = {}
+    for size in MODEL_SCALING_CONFIG.keys():
+        configs[size] = ModelConfigFactory.create_config(size)
+    return configs
+
+
+# Legacy configuration dictionary - maintained for backward compatibility
+OLMO_CONFIGS = _create_legacy_configs()

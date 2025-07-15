@@ -1,0 +1,3 @@
+[submodule "FinPileTokenizers"]
+	path = FinPileTokenizers
+	url = https://github.com/gtfintechlab/FinPileTokenizers.git

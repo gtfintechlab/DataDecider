@@ -472,7 +472,11 @@ def create_training_monitor(
     # Check for WANDB availability
     if use_wandb:
         try:
-            import wandb
+            import importlib.util
+
+            if importlib.util.find_spec("wandb") is None:
+                logger.warning("WANDB not installed, disabling WANDB tracking")
+                use_wandb = False
         except ImportError:
             logger.warning("WANDB not installed, disabling WANDB tracking")
             use_wandb = False

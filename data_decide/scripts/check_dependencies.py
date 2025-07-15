@@ -46,7 +46,7 @@ def check_cuda():
             print(f"  CUDA version: {torch.version.cuda}")
         else:
             print("- CUDA not available (CPU training only)")
-    except:
+    except Exception:
         print("✗ Cannot check CUDA (PyTorch not installed)")
 
 

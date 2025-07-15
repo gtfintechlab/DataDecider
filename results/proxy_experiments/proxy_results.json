@@ -1,0 +1,111 @@
+[
+  {
+    "name": "random_baseline",
+    "description": "Random 25% of documents",
+    "final_train_loss": 33.40026092529297,
+    "final_eval_loss": 32.34957160949707,
+    "train_perplexity": 320294155458926.94,
+    "eval_perplexity": 112005781843858.4,
+    "convergence_speed": 0.5456697540283203,
+    "training_time": 36.9503173828125,
+    "peak_memory_mb": 0,
+    "data_recipe": {
+      "name": "random_baseline",
+      "description": "Random 25% of documents",
+      "selection_method": "random",
+      "fraction": 0.25,
+      "seed": 42
+    }
+  },
+  {
+    "name": "high_quality",
+    "description": "Top 25% by quality score",
+    "final_train_loss": 30.594955444335938,
+    "final_eval_loss": 30.014470481872557,
+    "train_perplexity": 19374045866123.812,
+    "eval_perplexity": 10842237280914.21,
+    "convergence_speed": 0.5702655792236329,
+    "training_time": 34.845635414123535,
+    "peak_memory_mb": 0,
+    "data_recipe": {
+      "name": "high_quality",
+      "description": "Top 25% by quality score",
+      "selection_method": "quality_based",
+      "fraction": 0.25,
+      "quality_threshold": 0.9
+    }
+  },
+  {
+    "name": "high_diversity",
+    "description": "Top 25% by diversity score",
+    "final_train_loss": 29.667137145996094,
+    "final_eval_loss": 30.60728340148926,
+    "train_perplexity": 7660797036236.872,
+    "eval_perplexity": 19614366561440.918,
+    "convergence_speed": 0.5509463653564454,
+    "training_time": 32.00078511238098,
+    "peak_memory_mb": 0,
+    "data_recipe": {
+      "name": "high_diversity",
+      "description": "Top 25% by diversity score",
+      "selection_method": "diversity_based",
+      "fraction": 0.25,
+      "diversity_threshold": 0.85
+    }
+  },
+  {
+    "name": "balanced_qd",
+    "description": "Balanced quality and diversity",
+    "final_train_loss": 32.58491134643555,
+    "final_eval_loss": 32.24720439910889,
+    "train_perplexity": 141725236722987.78,
+    "eval_perplexity": 101107396458809.36,
+    "convergence_speed": 0.5451766738891602,
+    "training_time": 32.870591163635254,
+    "peak_memory_mb": 0,
+    "data_recipe": {
+      "name": "balanced_qd",
+      "description": "Balanced quality and diversity",
+      "selection_method": "composite",
+      "fraction": 0.25,
+      "quality_weight": 0.5,
+      "diversity_weight": 0.5
+    }
+  },
+  {
+    "name": "financial_focus",
+    "description": "Financial domain documents only",
+    "final_train_loss": 31.446456909179688,
+    "final_eval_loss": 30.57542266845703,
+    "train_perplexity": 45396535576644.06,
+    "eval_perplexity": 18999288907185.77,
+    "convergence_speed": 0.5704725265502929,
+    "training_time": 33.53128004074097,
+    "peak_memory_mb": 0,
+    "data_recipe": {
+      "name": "financial_focus",
+      "description": "Financial domain documents only",
+      "selection_method": "domain_based",
+      "domain": "financial",
+      "fraction": 0.5
+    }
+  },
+  {
+    "name": "long_context",
+    "description": "Documents with >500 tokens",
+    "final_train_loss": 32.23078155517578,
+    "final_eval_loss": 32.418206214904785,
+    "train_perplexity": 99460485958832.5,
+    "eval_perplexity": 119963208384551.7,
+    "convergence_speed": 0.5223535919189453,
+    "training_time": 33.13363194465637,
+    "peak_memory_mb": 0,
+    "data_recipe": {
+      "name": "long_context",
+      "description": "Documents with >500 tokens",
+      "selection_method": "length_based",
+      "min_tokens": 500,
+      "fraction": 0.3
+    }
+  }
+]

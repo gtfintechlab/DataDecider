@@ -8,7 +8,12 @@ from typing import Any, Dict, List
 import numpy as np
 from datasets import Dataset
 from tqdm import tqdm
-from transformers import AutoTokenizer
+
+from ..utils.logging_utils import get_logger
+
+# No tokenizer imports - tokenization handled by FinPileTokenizers
+
+logger = get_logger(__name__)
 
 
 class DataDecideCurator:
@@ -20,13 +25,13 @@ class DataDecideCurator:
     def __init__(
         self,
         data_path: str,
-        tokenizer_name: str = "allenai/OLMo-7B",
+        tokenizer_name: str = None,  # Deprecated - kept for compatibility
         proxy_model_size: str = "150M",
         num_proxy_steps: int = 1000,
         eval_metrics: List[str] = ["perplexity", "diversity", "quality"],
     ):
         self.data_path = data_path
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        # No tokenizer - all data must be pre-tokenized with FinPileTokenizers
         self.proxy_model_size = proxy_model_size
         self.num_proxy_steps = num_proxy_steps
         self.eval_metrics = eval_metrics
@@ -40,22 +45,61 @@ class DataDecideCurator:
 
         # Otherwise, load JSON/JSONL files
         data_files = []
-        for file in os.listdir(self.data_path):
-            if file.endswith(".json") or file.endswith(".json.gz"):
-                data_files.append(os.path.join(self.data_path, file))
+        try:
+            for file in os.listdir(self.data_path):
+                if file.endswith(".json") or file.endswith(".json.gz"):
+                    data_files.append(os.path.join(self.data_path, file))
+        except (OSError, FileNotFoundError) as e:
+            raise ValueError(f"Cannot access data directory '{self.data_path}': {e}")
+
+        if not data_files:
+            raise ValueError(f"No JSON files found in directory '{self.data_path}'")
 
         all_data = []
-        for file_path in tqdm(data_files, desc="Loading JSON files"):
-            if file_path.endswith(".gz"):
-                import gzip
+        failed_files = []
 
-                with gzip.open(file_path, "rt") as f:
-                    for line in f:
-                        all_data.append(json.loads(line))
-            else:
-                with open(file_path, "r") as f:
-                    for line in f:
-                        all_data.append(json.loads(line))
+        for file_path in tqdm(data_files, desc="Loading JSON files"):
+            try:
+                if file_path.endswith(".gz"):
+                    import gzip
+
+                    with gzip.open(file_path, "rt") as f:
+                        for line_num, line in enumerate(f, 1):
+                            line = line.strip()
+                            if not line:  # Skip empty lines
+                                continue
+                            try:
+                                all_data.append(json.loads(line))
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Invalid JSON at {file_path}:{line_num}: {e}")
+                                # Continue processing other lines
+                else:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        for line_num, line in enumerate(f, 1):
+                            line = line.strip()
+                            if not line:  # Skip empty lines
+                                continue
+                            try:
+                                all_data.append(json.loads(line))
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Invalid JSON at {file_path}:{line_num}: {e}")
+                                # Continue processing other lines
+
+            except (OSError, IOError, UnicodeDecodeError) as e:
+                # Use consistent error reporting
+                from ...utils.error_handling import build_data_loading_error, report_error
+
+                error_type = "permission" if isinstance(e, (OSError, IOError)) else "corrupted"
+                error = build_data_loading_error(file_path=str(file_path), error_type=error_type, details=str(e))
+                report_error(error, log_level="error")
+                failed_files.append(file_path)
+                # Continue with other files instead of failing completely
+
+        if failed_files:
+            logger.warning(f"Failed to load {len(failed_files)} files: {failed_files}")
+
+        if not all_data and data_files:
+            raise ValueError(f"No valid data loaded from {len(data_files)} files. Check file formats and permissions.")
 
         return all_data
 
